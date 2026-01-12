@@ -5,7 +5,10 @@ public class RelogioSimulacao : MonoBehaviour
 {
     public TextMeshProUGUI textoRelogio;
     public float tempoDecorrido = 0f;
-    public bool contando = false; // Agora começa parado
+    public bool contando = false; 
+
+    // Referência para podermos avisar quando acabar o tempo
+    public TrocaPainelSimulacao controladorPainel; 
 
     void Update()
     {
@@ -13,6 +16,23 @@ public class RelogioSimulacao : MonoBehaviour
         {
             tempoDecorrido += Time.deltaTime;
             AtualizarRelogio();
+
+            // VERIFICA SE CHEGOU AOS 10 MINUTOS (600 SEGUNDOS)
+            if (tempoDecorrido >= 600f)
+            {
+                tempoDecorrido = 600f; // Trava em 10:00
+                AtualizarRelogio(); // Atualiza visualmente uma ultima vez
+                
+                // Avisa o controlador para encerrar
+                if(controladorPainel != null)
+                {
+                    controladorPainel.FinalizarSimulacao();
+                }
+                else
+                {
+                    Debug.LogError("Relógio não tem referência do ControladorPainel!");
+                }
+            }
         }
     }
 
