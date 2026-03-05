@@ -17,22 +17,22 @@ public class DadosMinuto
 
 public class PeixeSimulador : MonoBehaviour
 {
-    [Header("--- VERSÃO FINAL COM FIM ---")]
+    [Header("--- VERSÃO FINAL (VIRADA SUAVE) ---")]
     public bool iniciarAutomaticamente = false; 
 
-    [Header("Configuração")]
+    [Header("Configuração de Espaço")]
     public Transform linhaCentral; 
     public float alturaAguaTotal = 8f; 
     public float limiteMinX = -8f; 
     public float limiteMaxX = 8f;
     public float tempoDeLatencia = 215f; 
-    
+
+    [Header("Escala da Simulação")]
+    [Tooltip("Ajuste isso para casar os cm/s reais com o tamanho do seu desenho na Unity.")]
+    public float fatorDeEscala = 0.08f;
+
     [Header("Dados")]
     public List<DadosMinuto> timelineComportamento;
-
-    [Header("Visual")]
-    public float amplitudeSenoide = 0.3f;
-    public float frequenciaSenoide = 5f;
 
     // Estado Interno
     private float tempoSimulacao = 0f;
@@ -40,9 +40,16 @@ public class PeixeSimulador : MonoBehaviour
     private int indiceMinutoAtual = 0;
     private Animator anim;
     private float[] limitesZonasY; 
+    
+    // Novas variáveis para controlar a virada
+    private float escalaXOriginal;
+    private Coroutine rotinaVirada;
 
     void Awake()
     {
+        // Salva o tamanho original do seu peixe (no seu caso, 200) para não perder a proporção
+        escalaXOriginal = Mathf.Abs(transform.localScale.x);
+        
         timelineComportamento = new List<DadosMinuto>();
         ConfigurarZonas();
         CarregarDadosCompletos(); 
@@ -73,18 +80,20 @@ public class PeixeSimulador : MonoBehaviour
         {
             simulando = true;
             tempoSimulacao = 0f;
+            
             if (linhaCentral != null)
-                transform.position = new Vector3(transform.position.x, linhaCentral.position.y, transform.position.z);
+            {
+                transform.position = GerarDestinoNaZona(1);
+            }
             
             StartCoroutine(CicloDeVida());
         }
     }
 
-    // --- NOVO MÉTODO PARA PARAR TUDO ---
     public void PararSimulacao()
     {
         simulando = false;
-        StopAllCoroutines(); // Cancela todos os movimentos
+        StopAllCoroutines(); 
         Debug.Log("Peixe parado pelo fim da simulação.");
     }
 
@@ -92,7 +101,7 @@ public class PeixeSimulador : MonoBehaviour
     {
         while (simulando) 
         {
-            AtualizarIndiceMinuto();
+            AtualizarIndiceMinuto(); 
             
             if (timelineComportamento.Count == 0) yield break;
 
@@ -109,13 +118,13 @@ public class PeixeSimulador : MonoBehaviour
                 int zona = EscolherZonaAlvo(dadosAtuais);
                 Vector3 destino = GerarDestinoNaZona(zona);
                 
-                float velocidade;
+                float velocidadeBruta;
                 if (zona >= 3 && dadosAtuais.velocidadeMaxima > dadosAtuais.velocidadeMedia * 1.5f)
-                    velocidade = dadosAtuais.velocidadeMaxima; 
+                    velocidadeBruta = dadosAtuais.velocidadeMaxima; 
                 else
-                    velocidade = Random.Range(dadosAtuais.velocidadeMedia * 0.9f, dadosAtuais.velocidadeMedia * 1.1f);
+                    velocidadeBruta = Random.Range(dadosAtuais.velocidadeMedia * 0.9f, dadosAtuais.velocidadeMedia * 1.1f);
 
-                yield return StartCoroutine(NadarPara(destino, velocidade));
+                yield return StartCoroutine(NadarPara(destino, velocidadeBruta));
             }
             else
             {
@@ -125,17 +134,20 @@ public class PeixeSimulador : MonoBehaviour
         }
     }
 
-    IEnumerator NadarPara(Vector3 destino, float velocidade)
+    IEnumerator NadarPara(Vector3 destino, float velocidadeBruta)
     {
         Vector3 inicio = transform.position;
         float distancia = Vector3.Distance(inicio, destino);
         
         if(distancia < 0.1f) yield break;
-        if(velocidade < 0.1f) velocidade = 2f; 
 
-        float duracao = distancia / velocidade;
+        float velocidadeUnity = velocidadeBruta * fatorDeEscala; 
+        if(velocidadeUnity < 0.1f) velocidadeUnity = 0.1f; 
+
+        float duracao = distancia / velocidadeUnity;
         float t = 0f;
 
+        // Agora a virada acontece junto com o nado de forma orgânica
         FlipSprite(destino.x);
 
         while (t < duracao)
@@ -147,8 +159,8 @@ public class PeixeSimulador : MonoBehaviour
             tempoSimulacao += dt; 
             float progress = t / duracao;
 
-            Vector3 novaPos = Vector3.Lerp(inicio, destino, progress);
-            novaPos.y += Mathf.Sin(progress * Mathf.PI * frequenciaSenoide) * amplitudeSenoide;
+            float smoothProgress = Mathf.SmoothStep(0f, 1f, progress);
+            Vector3 novaPos = Vector3.Lerp(inicio, destino, smoothProgress);
 
             transform.position = novaPos;
             yield return null;
@@ -156,6 +168,48 @@ public class PeixeSimulador : MonoBehaviour
         transform.position = destino;
     }
 
+    // --- SISTEMA DE VIRADA SUAVE ---
+
+    void FlipSprite(float destinoX)
+    {
+        // 1. Evita "micro-viradas" se o peixe for nadar quase reto para cima ou para baixo
+        if (Mathf.Abs(destinoX - transform.position.x) < 0.5f) return;
+
+        // 2. Define para qual lado ele tem que olhar
+        float alvoX = (destinoX < transform.position.x) ? -escalaXOriginal : escalaXOriginal;
+
+        // 3. Se a direção já é a mesma, não faz nada
+        if (Mathf.Sign(transform.localScale.x) == Mathf.Sign(alvoX) && Mathf.Abs(transform.localScale.x) > 0.1f) return;
+
+        // 4. Inicia a animação de rotação em paralelo com o movimento
+        if (rotinaVirada != null) StopCoroutine(rotinaVirada);
+        rotinaVirada = StartCoroutine(AnimarVirada(alvoX));
+    }
+
+    IEnumerator AnimarVirada(float alvoX)
+    {
+        float tempoVirada = 0.12f; // Tempo perfeito para imitar um giro rápido do corpo
+        float t = 0f;
+        float startX = transform.localScale.x;
+        Vector3 scale = transform.localScale;
+
+        while (t < tempoVirada)
+        {
+            float dt = Time.deltaTime; 
+            if(dt == 0) dt = 0.016f; 
+
+            t += dt;
+            scale.x = Mathf.Lerp(startX, alvoX, t / tempoVirada);
+            transform.localScale = scale;
+            yield return null;
+        }
+        
+        scale.x = alvoX;
+        transform.localScale = scale;
+    }
+
+    // --- FUNÇÕES AUXILIARES ---
+    
     void AtualizarIndiceMinuto() 
     { 
         indiceMinutoAtual = Mathf.FloorToInt(tempoSimulacao / 60f); 
@@ -205,22 +259,13 @@ public class PeixeSimulador : MonoBehaviour
         return new Vector3(xFinal, yFinal, transform.position.z);
     }
 
-    void FlipSprite(float destinoX)
-    {
-        float escalaX = Mathf.Abs(transform.localScale.x);
-        if (destinoX < transform.position.x)
-            transform.localScale = new Vector3(-escalaX, transform.localScale.y, transform.localScale.z);
-        else
-            transform.localScale = new Vector3(escalaX, transform.localScale.y, transform.localScale.z);
-    }
-
     void CarregarDadosCompletos()
     {
         if(timelineComportamento == null) timelineComportamento = new List<DadosMinuto>();
         timelineComportamento.Clear();
 
         // 0-1
-        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "0-1", probFundo1 = 0.73f, probFundo2 = 0.27f, probTopo3 = 0f, probTopo4 = 0f, velocidadeMedia = 2.05f, velocidadeMaxima = 2.05f, chanceEstarMovendo = 0.36f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "0-1", probFundo1 = 0.73f, probFundo2 = 0.27f, probTopo3 = 0f, probTopo4 = 0f, velocidadeMedia = 2.05f, velocidadeMaxima = 2.05f, chanceEstarMovendo = 0.53f });
         // 1-2
         timelineComportamento.Add(new DadosMinuto { nomeMinuto = "1-2", probFundo1 = 0.60f, probFundo2 = 0.40f, probTopo3 = 0f, probTopo4 = 0f, velocidadeMedia = 3.26f, velocidadeMaxima = 5.50f, chanceEstarMovendo = 0.65f });
         // 2-3
