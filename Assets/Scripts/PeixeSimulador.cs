@@ -1,6 +1,8 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using TMPro; 
+using UnityEngine.UI; 
 
 [System.Serializable]
 public class DadosMinuto
@@ -17,8 +19,17 @@ public class DadosMinuto
 
 public class PeixeSimulador : MonoBehaviour
 {
-    [Header("--- VERSÃO FINAL (VIRADA SUAVE) ---")]
+    [Header("--- VERSÃO FINAL (PERFIS MÚLTIPLOS) ---")]
     public bool iniciarAutomaticamente = false; 
+
+    [Header("UI (Interface)")]
+    public TextMeshProUGUI textoModoAtual; 
+    public Button btnNormal; 
+    public Button btnAlcool; 
+    public TextMeshProUGUI textoVariaveis; 
+
+    [Header("Sistemas Externos")]
+    public RelogioSimulacao relogioSimulacao; // <-- ADICIONADO: Referência do Relógio
 
     [Header("Configuração de Espaço")]
     public Transform linhaCentral; 
@@ -31,7 +42,7 @@ public class PeixeSimulador : MonoBehaviour
     [Tooltip("Ajuste isso para casar os cm/s reais com o tamanho do seu desenho na Unity.")]
     public float fatorDeEscala = 0.08f;
 
-    [Header("Dados")]
+    [Header("Dados (Visualização)")]
     public List<DadosMinuto> timelineComportamento;
 
     // Estado Interno
@@ -47,12 +58,10 @@ public class PeixeSimulador : MonoBehaviour
 
     void Awake()
     {
-        // Salva o tamanho original do seu peixe (no seu caso, 200) para não perder a proporção
         escalaXOriginal = Mathf.Abs(transform.localScale.x);
-        
         timelineComportamento = new List<DadosMinuto>();
         ConfigurarZonas();
-        CarregarDadosCompletos(); 
+        CarregarDadosNormais(); 
     }
 
     void Start()
@@ -68,18 +77,63 @@ public class PeixeSimulador : MonoBehaviour
             return;
         }
 
+        if (textoModoAtual != null) textoModoAtual.text = "Modo: Controle Negativo (Normal)";
+        
+        if (btnNormal != null) btnNormal.interactable = false;
+        if (btnAlcool != null) btnAlcool.interactable = true;
+
+        if (textoVariaveis != null) textoVariaveis.text = "Aguardando início da simulação...";
+
         if (iniciarAutomaticamente) IniciarSimulacao();
     }
+
+    // --- MÉTODOS PARA OS BOTÕES DA UI ---
+
+    public void IniciarSimulacaoNormal()
+    {
+        PararSimulacao();
+        CarregarDadosNormais();
+        
+        if (textoModoAtual != null) textoModoAtual.text = "Modo: Controle Negativo (Normal)";
+        
+        if (btnNormal != null) btnNormal.interactable = false;
+        if (btnAlcool != null) btnAlcool.interactable = true;
+
+        IniciarSimulacao();
+        Debug.Log("Simulação reiniciada: Controle Negativo (Normal)");
+    }
+
+    public void IniciarSimulacaoAlcool()
+    {
+        PararSimulacao();
+        CarregarDadosAlcool();
+        
+        if (textoModoAtual != null) textoModoAtual.text = "Modo: Álcool 0,5%";
+
+        if (btnNormal != null) btnNormal.interactable = true;
+        if (btnAlcool != null) btnAlcool.interactable = false;
+
+        IniciarSimulacao();
+        Debug.Log("Simulação reiniciada: Exposição ao Álcool 0,5%");
+    }
+
+    // ------------------------------------
 
     public void IniciarSimulacao()
     {
         if (timelineComportamento == null || timelineComportamento.Count == 0)
-             CarregarDadosCompletos();
+             CarregarDadosNormais();
 
         if (!simulando)
         {
             simulando = true;
             tempoSimulacao = 0f;
+            
+            // <-- CHAMA O RELÓGIO PARA ZERAR E COMEÇAR A CONTAR
+            if (relogioSimulacao != null) 
+            {
+                relogioSimulacao.IniciarRelogio();
+            }
             
             if (linhaCentral != null)
             {
@@ -94,7 +148,27 @@ public class PeixeSimulador : MonoBehaviour
     {
         simulando = false;
         StopAllCoroutines(); 
-        Debug.Log("Peixe parado pelo fim da simulação.");
+        
+        // <-- CHAMA O RELÓGIO PARA PARAR DE CONTAR
+        if (relogioSimulacao != null)
+        {
+            relogioSimulacao.PararRelogio();
+        }
+    }
+
+    void AtualizarPainelVariaveis(DadosMinuto dados)
+    {
+        if (textoVariaveis == null) return;
+
+        textoVariaveis.text = 
+            $"<b>Minuto Atual:</b> {dados.nomeMinuto}\n\n" +
+            $"<b>Prob. Fundo 1:</b> {(dados.probFundo1 * 100).ToString("F0")}%\n" +
+            $"<b>Prob. Fundo 2:</b> {(dados.probFundo2 * 100).ToString("F0")}%\n" +
+            $"<b>Prob. Topo 3:</b> {(dados.probTopo3 * 100).ToString("F0")}%\n" +
+            $"<b>Prob. Topo 4:</b> {(dados.probTopo4 * 100).ToString("F0")}%\n" +
+            $"<b>Veloc. Média:</b> {dados.velocidadeMedia} cm/s\n" +
+            $"<b>Veloc. Máx:</b> {dados.velocidadeMaxima} cm/s\n" +
+            $"<b>Chance de Mover:</b> {(dados.chanceEstarMovendo * 100).ToString("F0")}%";
     }
 
     IEnumerator CicloDeVida()
@@ -110,6 +184,8 @@ public class PeixeSimulador : MonoBehaviour
                 dadosAtuais = timelineComportamento[indiceMinutoAtual];
             else
                 dadosAtuais = timelineComportamento[timelineComportamento.Count - 1];
+
+            AtualizarPainelVariaveis(dadosAtuais);
 
             bool deveMover = Random.value < dadosAtuais.chanceEstarMovendo;
 
@@ -147,7 +223,6 @@ public class PeixeSimulador : MonoBehaviour
         float duracao = distancia / velocidadeUnity;
         float t = 0f;
 
-        // Agora a virada acontece junto com o nado de forma orgânica
         FlipSprite(destino.x);
 
         while (t < duracao)
@@ -168,27 +243,21 @@ public class PeixeSimulador : MonoBehaviour
         transform.position = destino;
     }
 
-    // --- SISTEMA DE VIRADA SUAVE ---
-
     void FlipSprite(float destinoX)
     {
-        // 1. Evita "micro-viradas" se o peixe for nadar quase reto para cima ou para baixo
         if (Mathf.Abs(destinoX - transform.position.x) < 0.5f) return;
 
-        // 2. Define para qual lado ele tem que olhar
         float alvoX = (destinoX < transform.position.x) ? -escalaXOriginal : escalaXOriginal;
 
-        // 3. Se a direção já é a mesma, não faz nada
         if (Mathf.Sign(transform.localScale.x) == Mathf.Sign(alvoX) && Mathf.Abs(transform.localScale.x) > 0.1f) return;
 
-        // 4. Inicia a animação de rotação em paralelo com o movimento
         if (rotinaVirada != null) StopCoroutine(rotinaVirada);
         rotinaVirada = StartCoroutine(AnimarVirada(alvoX));
     }
 
     IEnumerator AnimarVirada(float alvoX)
     {
-        float tempoVirada = 0.12f; // Tempo perfeito para imitar um giro rápido do corpo
+        float tempoVirada = 0.12f; 
         float t = 0f;
         float startX = transform.localScale.x;
         Vector3 scale = transform.localScale;
@@ -207,8 +276,6 @@ public class PeixeSimulador : MonoBehaviour
         scale.x = alvoX;
         transform.localScale = scale;
     }
-
-    // --- FUNÇÕES AUXILIARES ---
     
     void AtualizarIndiceMinuto() 
     { 
@@ -259,31 +326,40 @@ public class PeixeSimulador : MonoBehaviour
         return new Vector3(xFinal, yFinal, transform.position.z);
     }
 
-    void CarregarDadosCompletos()
+    void CarregarDadosNormais()
     {
+        tempoDeLatencia = 215f; 
         if(timelineComportamento == null) timelineComportamento = new List<DadosMinuto>();
         timelineComportamento.Clear();
 
-        // 0-1
         timelineComportamento.Add(new DadosMinuto { nomeMinuto = "0-1", probFundo1 = 0.73f, probFundo2 = 0.27f, probTopo3 = 0f, probTopo4 = 0f, velocidadeMedia = 2.05f, velocidadeMaxima = 2.05f, chanceEstarMovendo = 0.53f });
-        // 1-2
         timelineComportamento.Add(new DadosMinuto { nomeMinuto = "1-2", probFundo1 = 0.60f, probFundo2 = 0.40f, probTopo3 = 0f, probTopo4 = 0f, velocidadeMedia = 3.26f, velocidadeMaxima = 5.50f, chanceEstarMovendo = 0.65f });
-        // 2-3
         timelineComportamento.Add(new DadosMinuto { nomeMinuto = "2-3", probFundo1 = 0.52f, probFundo2 = 0.43f, probTopo3 = 0.05f, probTopo4 = 0f, velocidadeMedia = 8.05f, velocidadeMaxima = 82.81f, chanceEstarMovendo = 0.90f });
-        // 3-4
         timelineComportamento.Add(new DadosMinuto { nomeMinuto = "3-4", probFundo1 = 0.48f, probFundo2 = 0.45f, probTopo3 = 0.07f, probTopo4 = 0f, velocidadeMedia = 4.05f, velocidadeMaxima = 53.00f, chanceEstarMovendo = 0.85f });
-        // 4-5
         timelineComportamento.Add(new DadosMinuto { nomeMinuto = "4-5", probFundo1 = 0.30f, probFundo2 = 0.60f, probTopo3 = 0.10f, probTopo4 = 0f, velocidadeMedia = 4.35f, velocidadeMaxima = 47.55f, chanceEstarMovendo = 0.93f });
-        // 5-6
         timelineComportamento.Add(new DadosMinuto { nomeMinuto = "5-6", probFundo1 = 0.22f, probFundo2 = 0.35f, probTopo3 = 0.35f, probTopo4 = 0.08f, velocidadeMedia = 7.38f, velocidadeMaxima = 66.04f, chanceEstarMovendo = 0.96f });
-        // 6-7
         timelineComportamento.Add(new DadosMinuto { nomeMinuto = "6-7", probFundo1 = 0.32f, probFundo2 = 0.38f, probTopo3 = 0.30f, probTopo4 = 0f, velocidadeMedia = 6.35f, velocidadeMaxima = 29.00f, chanceEstarMovendo = 0.96f });
-        // 7-8
         timelineComportamento.Add(new DadosMinuto { nomeMinuto = "7-8", probFundo1 = 0.33f, probFundo2 = 0.28f, probTopo3 = 0.30f, probTopo4 = 0.09f, velocidadeMedia = 5.80f, velocidadeMaxima = 18.50f, chanceEstarMovendo = 1.0f });
-        // 8-9
         timelineComportamento.Add(new DadosMinuto { nomeMinuto = "8-9", probFundo1 = 0.22f, probFundo2 = 0.43f, probTopo3 = 0.20f, probTopo4 = 0.15f, velocidadeMedia = 6.20f, velocidadeMaxima = 13.50f, chanceEstarMovendo = 0.93f });
-        // 9-10
         timelineComportamento.Add(new DadosMinuto { nomeMinuto = "9-10", probFundo1 = 0.33f, probFundo2 = 0.55f, probTopo3 = 0.07f, probTopo4 = 0.05f, velocidadeMedia = 5.89f, velocidadeMaxima = 7.25f, chanceEstarMovendo = 0.95f });
+    }
+
+    void CarregarDadosAlcool()
+    {
+        tempoDeLatencia = 215f; 
+        if(timelineComportamento == null) timelineComportamento = new List<DadosMinuto>();
+        timelineComportamento.Clear();
+
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "0-1", probFundo1 = 0.68f, probFundo2 = 0.32f, probTopo3 = 0f, probTopo4 = 0f, velocidadeMedia = 2.50f, velocidadeMaxima = 5.91f, chanceEstarMovendo = 0.78f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "1-2", probFundo1 = 0.38f, probFundo2 = 0.48f, probTopo3 = 0.14f, probTopo4 = 0f, velocidadeMedia = 3.50f, velocidadeMaxima = 9.05f, chanceEstarMovendo = 0.95f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "2-3", probFundo1 = 0.23f, probFundo2 = 0.27f, probTopo3 = 0.37f, probTopo4 = 0.13f, velocidadeMedia = 5.45f, velocidadeMaxima = 41.05f, chanceEstarMovendo = 0.95f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "3-4", probFundo1 = 0.00f, probFundo2 = 0.22f, probTopo3 = 0.48f, probTopo4 = 0.30f, velocidadeMedia = 6.53f, velocidadeMaxima = 66.10f, chanceEstarMovendo = 1.00f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "4-5", probFundo1 = 0.07f, probFundo2 = 0.47f, probTopo3 = 0.35f, probTopo4 = 0.11f, velocidadeMedia = 6.65f, velocidadeMaxima = 45.00f, chanceEstarMovendo = 0.92f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "5-6", probFundo1 = 0.20f, probFundo2 = 0.33f, probTopo3 = 0.33f, probTopo4 = 0.14f, velocidadeMedia = 4.59f, velocidadeMaxima = 36.50f, chanceEstarMovendo = 0.88f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "6-7", probFundo1 = 0.07f, probFundo2 = 0.32f, probTopo3 = 0.46f, probTopo4 = 0.15f, velocidadeMedia = 6.54f, velocidadeMaxima = 19.77f, chanceEstarMovendo = 0.95f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "7-8", probFundo1 = 0.00f, probFundo2 = 0.43f, probTopo3 = 0.38f, probTopo4 = 0.19f, velocidadeMedia = 7.02f, velocidadeMaxima = 58.05f, chanceEstarMovendo = 0.85f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "8-9", probFundo1 = 0.13f, probFundo2 = 0.40f, probTopo3 = 0.30f, probTopo4 = 0.17f, velocidadeMedia = 6.05f, velocidadeMaxima = 36.54f, chanceEstarMovendo = 0.92f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "9-10", probFundo1 = 0.12f, probFundo2 = 0.35f, probTopo3 = 0.47f, probTopo4 = 0.06f, velocidadeMedia = 4.56f, velocidadeMaxima = 21.04f, chanceEstarMovendo = 0.93f });
     }
 
     void OnDrawGizmos()
