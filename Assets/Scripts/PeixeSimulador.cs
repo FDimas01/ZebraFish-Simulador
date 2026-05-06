@@ -27,9 +27,10 @@ public class PeixeSimulador : MonoBehaviour
     public Button btnNormal; 
     public Button btnAlcool; 
     public TextMeshProUGUI textoVariaveis; 
+    public TextMeshProUGUI textoAviso; // <-- ADICIONADO: Variável para o aviso flutuante
 
     [Header("Sistemas Externos")]
-    public RelogioSimulacao relogioSimulacao; // <-- ADICIONADO: Referência do Relógio
+    public RelogioSimulacao relogioSimulacao; 
 
     [Header("Configuração de Espaço")]
     public Transform linhaCentral; 
@@ -52,9 +53,10 @@ public class PeixeSimulador : MonoBehaviour
     private Animator anim;
     private float[] limitesZonasY; 
     
-    // Novas variáveis para controlar a virada
+    // Variáveis para controlar a virada e os avisos
     private float escalaXOriginal;
     private Coroutine rotinaVirada;
+    private Coroutine rotinaAviso; // <-- ADICIONADO: Controla o tempo do aviso na tela
 
     void Awake()
     {
@@ -83,6 +85,9 @@ public class PeixeSimulador : MonoBehaviour
         if (btnAlcool != null) btnAlcool.interactable = true;
 
         if (textoVariaveis != null) textoVariaveis.text = "Aguardando início da simulação...";
+        
+        // Esconde o aviso no início
+        if (textoAviso != null) textoAviso.text = "";
 
         if (iniciarAutomaticamente) IniciarSimulacao();
     }
@@ -99,6 +104,8 @@ public class PeixeSimulador : MonoBehaviour
         if (btnNormal != null) btnNormal.interactable = false;
         if (btnAlcool != null) btnAlcool.interactable = true;
 
+        ExibirAvisoTemporario("Simulação Reiniciada!"); // <-- Dispara o aviso na tela
+
         IniciarSimulacao();
         Debug.Log("Simulação reiniciada: Controle Negativo (Normal)");
     }
@@ -113,8 +120,29 @@ public class PeixeSimulador : MonoBehaviour
         if (btnNormal != null) btnNormal.interactable = true;
         if (btnAlcool != null) btnAlcool.interactable = false;
 
+        ExibirAvisoTemporario("Simulação Reiniciada!"); // <-- Dispara o aviso na tela
+
         IniciarSimulacao();
         Debug.Log("Simulação reiniciada: Exposição ao Álcool 0,5%");
+    }
+
+    // --- SISTEMA DE AVISO TEMPORÁRIO ---
+
+    void ExibirAvisoTemporario(string mensagem)
+    {
+        if (textoAviso == null) return;
+
+        // Se já houver um aviso na tela, paramos a contagem dele para reiniciar
+        if (rotinaAviso != null) StopCoroutine(rotinaAviso);
+        
+        rotinaAviso = StartCoroutine(RotinaAviso(mensagem));
+    }
+
+    IEnumerator RotinaAviso(string mensagem)
+    {
+        textoAviso.text = mensagem;
+        yield return new WaitForSeconds(2.5f); // Fica na tela por 2.5 segundos
+        textoAviso.text = ""; // Some com o texto
     }
 
     // ------------------------------------
@@ -129,7 +157,6 @@ public class PeixeSimulador : MonoBehaviour
             simulando = true;
             tempoSimulacao = 0f;
             
-            // <-- CHAMA O RELÓGIO PARA ZERAR E COMEÇAR A CONTAR
             if (relogioSimulacao != null) 
             {
                 relogioSimulacao.IniciarRelogio();
@@ -149,7 +176,6 @@ public class PeixeSimulador : MonoBehaviour
         simulando = false;
         StopAllCoroutines(); 
         
-        // <-- CHAMA O RELÓGIO PARA PARAR DE CONTAR
         if (relogioSimulacao != null)
         {
             relogioSimulacao.PararRelogio();
@@ -161,7 +187,7 @@ public class PeixeSimulador : MonoBehaviour
         if (textoVariaveis == null) return;
 
         textoVariaveis.text = 
-            $"<b>Minuto Atual:</b> {dados.nomeMinuto}\n\n" +
+            $"<b>Minuto Atual:</b> {dados.nomeMinuto}\n" +
             $"<b>Prob. Fundo 1:</b> {(dados.probFundo1 * 100).ToString("F0")}%\n" +
             $"<b>Prob. Fundo 2:</b> {(dados.probFundo2 * 100).ToString("F0")}%\n" +
             $"<b>Prob. Topo 3:</b> {(dados.probTopo3 * 100).ToString("F0")}%\n" +
