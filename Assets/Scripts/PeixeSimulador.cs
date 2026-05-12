@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using TMPro; 
 using UnityEngine.UI; 
+using System.Globalization; 
 
 [System.Serializable]
 public class DadosMinuto
@@ -19,18 +20,41 @@ public class DadosMinuto
 
 public class PeixeSimulador : MonoBehaviour
 {
-    [Header("--- VERSÃO FINAL (PERFIS MÚLTIPLOS) ---")]
+    [Header("--- VERSÃO FINAL (SANDBOX INTELIGENTE) ---")]
     public bool iniciarAutomaticamente = false; 
 
-    [Header("UI (Interface)")]
+    [Header("UI (Interface Geral)")]
     public TextMeshProUGUI textoModoAtual; 
     public Button btnNormal; 
     public Button btnAlcool; 
-    public TextMeshProUGUI textoVariaveis; 
-    public TextMeshProUGUI textoAviso; // <-- ADICIONADO: Variável para o aviso flutuante
+    public Button btnAlcoolAlto; 
+    public Button btnLivre; 
+    public TextMeshProUGUI textoAviso; 
+
+    [Header("Painel de Variáveis (Alternância)")]
+    [Tooltip("O texto simples de leitura para os modos programados")]
+    public TextMeshProUGUI textoVariaveisLeitura; 
+    
+    [Tooltip("O objeto pai que guarda todas as caixas de input do Modo Livre")]
+    public GameObject grupoInputsEdicao; 
+
+    [Header("Inputs do Modo Livre")]
+    public TextMeshProUGUI textoMinutoAtual; 
+    public TMP_InputField inputProb1;
+    public TMP_InputField inputProb2;
+    public TMP_InputField inputProb3;
+    public TMP_InputField inputProb4;
+    public TMP_InputField inputVelMedia;
+    public TMP_InputField inputVelMax;
+    public TMP_InputField inputChance;
 
     [Header("Sistemas Externos")]
     public RelogioSimulacao relogioSimulacao; 
+
+    [Header("Sistema de Comparação (Fantasma)")]
+    public GameObject peixeFantasma; 
+    private List<DadosMinuto> timelineFantasma;
+    private Coroutine rotinaViradaFantasma;
 
     [Header("Configuração de Espaço")]
     public Transform linhaCentral; 
@@ -40,7 +64,6 @@ public class PeixeSimulador : MonoBehaviour
     public float tempoDeLatencia = 215f; 
 
     [Header("Escala da Simulação")]
-    [Tooltip("Ajuste isso para casar os cm/s reais com o tamanho do seu desenho na Unity.")]
     public float fatorDeEscala = 0.08f;
 
     [Header("Dados (Visualização)")]
@@ -50,44 +73,46 @@ public class PeixeSimulador : MonoBehaviour
     private float tempoSimulacao = 0f;
     private bool simulando = false;
     private int indiceMinutoAtual = 0;
-    private Animator anim;
     private float[] limitesZonasY; 
-    
-    // Variáveis para controlar a virada e os avisos
     private float escalaXOriginal;
     private Coroutine rotinaVirada;
-    private Coroutine rotinaAviso; // <-- ADICIONADO: Controla o tempo do aviso na tela
+    private bool modoLivreAtivo = false; 
 
     void Awake()
     {
         escalaXOriginal = Mathf.Abs(transform.localScale.x);
         timelineComportamento = new List<DadosMinuto>();
+        timelineFantasma = new List<DadosMinuto>();
+        
         ConfigurarZonas();
         CarregarDadosNormais(); 
+        CarregarDadosFantasma(); 
     }
 
     void Start()
     {
         if (Time.timeScale == 0) Time.timeScale = 1f;
 
-        anim = GetComponent<Animator>();
+        Animator anim = GetComponent<Animator>();
         if (anim != null && anim.enabled) anim.enabled = false;
 
         if (linhaCentral == null)
-        {
             Debug.LogError("ERRO: Arraste o objeto ReferenciaCentro para o campo Linha Central!");
-            return;
-        }
 
+        // Configurações iniciais
         if (textoModoAtual != null) textoModoAtual.text = "Modo: Controle Negativo (Normal)";
-        
         if (btnNormal != null) btnNormal.interactable = false;
         if (btnAlcool != null) btnAlcool.interactable = true;
-
-        if (textoVariaveis != null) textoVariaveis.text = "Aguardando início da simulação...";
-        
-        // Esconde o aviso no início
+        if (btnAlcoolAlto != null) btnAlcoolAlto.interactable = true;
+        if (btnLivre != null) btnLivre.interactable = true;
         if (textoAviso != null) textoAviso.text = "";
+        if (peixeFantasma != null) peixeFantasma.SetActive(false);
+
+        // Como o jogo começa no modo Normal, ativamos a leitura e desligamos a edição
+        if (textoVariaveisLeitura != null) textoVariaveisLeitura.gameObject.SetActive(true);
+        if (grupoInputsEdicao != null) grupoInputsEdicao.SetActive(false);
+
+        ConfigurarListenersDeEdicao();
 
         if (iniciarAutomaticamente) IniciarSimulacao();
     }
@@ -98,54 +123,203 @@ public class PeixeSimulador : MonoBehaviour
     {
         PararSimulacao();
         CarregarDadosNormais();
+        modoLivreAtivo = false;
         
         if (textoModoAtual != null) textoModoAtual.text = "Modo: Controle Negativo (Normal)";
-        
         if (btnNormal != null) btnNormal.interactable = false;
         if (btnAlcool != null) btnAlcool.interactable = true;
+        if (btnAlcoolAlto != null) btnAlcoolAlto.interactable = true;
+        if (btnLivre != null) btnLivre.interactable = true;
+        if (peixeFantasma != null) peixeFantasma.SetActive(false);
 
-        ExibirAvisoTemporario("Simulação Reiniciada!"); // <-- Dispara o aviso na tela
+        if (textoVariaveisLeitura != null) textoVariaveisLeitura.gameObject.SetActive(true);
+        if (grupoInputsEdicao != null) grupoInputsEdicao.SetActive(false);
 
+        ExibirAvisoTemporario("Simulação Reiniciada!"); 
         IniciarSimulacao();
-        Debug.Log("Simulação reiniciada: Controle Negativo (Normal)");
     }
 
     public void IniciarSimulacaoAlcool()
     {
         PararSimulacao();
         CarregarDadosAlcool();
+        modoLivreAtivo = false;
         
         if (textoModoAtual != null) textoModoAtual.text = "Modo: Álcool 0,5%";
-
         if (btnNormal != null) btnNormal.interactable = true;
         if (btnAlcool != null) btnAlcool.interactable = false;
+        if (btnAlcoolAlto != null) btnAlcoolAlto.interactable = true;
+        if (btnLivre != null) btnLivre.interactable = true;
+        if (peixeFantasma != null) peixeFantasma.SetActive(true);
 
-        ExibirAvisoTemporario("Simulação Reiniciada!"); // <-- Dispara o aviso na tela
+        if (textoVariaveisLeitura != null) textoVariaveisLeitura.gameObject.SetActive(true);
+        if (grupoInputsEdicao != null) grupoInputsEdicao.SetActive(false);
 
+        ExibirAvisoTemporario("Simulação Reiniciada!"); 
         IniciarSimulacao();
-        Debug.Log("Simulação reiniciada: Exposição ao Álcool 0,5%");
+    }
+
+    public void IniciarSimulacaoAlcoolAlto()
+    {
+        PararSimulacao();
+        CarregarDadosAlcoolAlto();
+        modoLivreAtivo = false;
+        
+        if (textoModoAtual != null) textoModoAtual.text = "Modo: Álcool 2,0%";
+        if (btnNormal != null) btnNormal.interactable = true;
+        if (btnAlcool != null) btnAlcool.interactable = true;
+        if (btnAlcoolAlto != null) btnAlcoolAlto.interactable = false;
+        if (btnLivre != null) btnLivre.interactable = true;
+        if (peixeFantasma != null) peixeFantasma.SetActive(true);
+
+        if (textoVariaveisLeitura != null) textoVariaveisLeitura.gameObject.SetActive(true);
+        if (grupoInputsEdicao != null) grupoInputsEdicao.SetActive(false);
+
+        ExibirAvisoTemporario("Simulação Reiniciada!"); 
+        IniciarSimulacao();
+    }
+
+    public void IniciarSimulacaoLivre()
+    {
+        PararSimulacao();
+        CarregarDadosNormais(); 
+        modoLivreAtivo = true;
+        
+        if (textoModoAtual != null) textoModoAtual.text = "Modo: Livre (Customizável)";
+        if (btnNormal != null) btnNormal.interactable = true;
+        if (btnAlcool != null) btnAlcool.interactable = true;
+        if (btnAlcoolAlto != null) btnAlcoolAlto.interactable = true;
+        if (btnLivre != null) btnLivre.interactable = false;
+        if (peixeFantasma != null) peixeFantasma.SetActive(true); 
+
+        if (textoVariaveisLeitura != null) textoVariaveisLeitura.gameObject.SetActive(false);
+        if (grupoInputsEdicao != null) grupoInputsEdicao.SetActive(true);
+
+        ExibirAvisoTemporario("Modo Livre Ativado!"); 
+        IniciarSimulacao();
+    }
+
+    // --- NOVO MÉTODO: RESETAR MODO LIVRE ---
+    public void ResetarVariaveisLivre()
+    {
+        if (!modoLivreAtivo) return;
+
+        // Recarrega os dados padrão na memória
+        CarregarDadosNormais();
+
+        // Força a atualização imediata das caixas de texto com os dados zerados
+        DadosMinuto dadosAtuais = (indiceMinutoAtual < timelineComportamento.Count) 
+            ? timelineComportamento[indiceMinutoAtual] 
+            : timelineComportamento[timelineComportamento.Count - 1];
+
+        if (inputProb1 != null) inputProb1.text = (dadosAtuais.probFundo1 * 100).ToString("F0");
+        if (inputProb2 != null) inputProb2.text = (dadosAtuais.probFundo2 * 100).ToString("F0");
+        if (inputProb3 != null) inputProb3.text = (dadosAtuais.probTopo3 * 100).ToString("F0");
+        if (inputProb4 != null) inputProb4.text = (dadosAtuais.probTopo4 * 100).ToString("F0");
+        if (inputVelMedia != null) inputVelMedia.text = dadosAtuais.velocidadeMedia.ToString("F2");
+        if (inputVelMax != null) inputVelMax.text = dadosAtuais.velocidadeMaxima.ToString("F2");
+        if (inputChance != null) inputChance.text = (dadosAtuais.chanceEstarMovendo * 100).ToString("F0");
+
+        ExibirAvisoTemporario("Valores Restaurados!");
+        Debug.Log("Variáveis do Modo Livre foram resetadas para o Controle Negativo.");
+    }
+
+    // --- SISTEMA DE EDIÇÃO EM TEMPO REAL (SANDBOX) ---
+
+    void ConfigurarListenersDeEdicao()
+    {
+        if(inputProb1 != null) inputProb1.onEndEdit.AddListener(delegate { ReceberEdicaoDoUsuario(); });
+        if(inputProb2 != null) inputProb2.onEndEdit.AddListener(delegate { ReceberEdicaoDoUsuario(); });
+        if(inputProb3 != null) inputProb3.onEndEdit.AddListener(delegate { ReceberEdicaoDoUsuario(); });
+        if(inputProb4 != null) inputProb4.onEndEdit.AddListener(delegate { ReceberEdicaoDoUsuario(); });
+        if(inputVelMedia != null) inputVelMedia.onEndEdit.AddListener(delegate { ReceberEdicaoDoUsuario(); });
+        if(inputVelMax != null) inputVelMax.onEndEdit.AddListener(delegate { ReceberEdicaoDoUsuario(); });
+        if(inputChance != null) inputChance.onEndEdit.AddListener(delegate { ReceberEdicaoDoUsuario(); });
+    }
+
+    public void ReceberEdicaoDoUsuario()
+    {
+        if (!modoLivreAtivo || timelineComportamento == null || timelineComportamento.Count == 0 || !simulando) return;
+
+        DadosMinuto dadosAtuais = (indiceMinutoAtual < timelineComportamento.Count) 
+            ? timelineComportamento[indiceMinutoAtual] 
+            : timelineComportamento[timelineComportamento.Count - 1];
+
+        dadosAtuais.probFundo1 = LerInput(inputProb1.text, dadosAtuais.probFundo1 * 100f) / 100f;
+        dadosAtuais.probFundo2 = LerInput(inputProb2.text, dadosAtuais.probFundo2 * 100f) / 100f;
+        dadosAtuais.probTopo3 = LerInput(inputProb3.text, dadosAtuais.probTopo3 * 100f) / 100f;
+        dadosAtuais.probTopo4 = LerInput(inputProb4.text, dadosAtuais.probTopo4 * 100f) / 100f;
+        dadosAtuais.velocidadeMedia = LerInput(inputVelMedia.text, dadosAtuais.velocidadeMedia);
+        dadosAtuais.velocidadeMaxima = LerInput(inputVelMax.text, dadosAtuais.velocidadeMaxima);
+        dadosAtuais.chanceEstarMovendo = LerInput(inputChance.text, dadosAtuais.chanceEstarMovendo * 100f) / 100f;
+    }
+
+    float LerInput(string texto, float valorPadrao)
+    {
+        if (string.IsNullOrEmpty(texto)) return valorPadrao;
+        string txtLimpo = texto.Replace("%", "").Replace("cm/s", "").Trim().Replace(",", "."); 
+        if (float.TryParse(txtLimpo, NumberStyles.Any, CultureInfo.InvariantCulture, out float resultado))
+            return resultado;
+        
+        return valorPadrao; 
+    }
+
+    void AtualizarPainelVariaveis(DadosMinuto dados)
+    {
+        if (modoLivreAtivo)
+        {
+            if (textoMinutoAtual != null) textoMinutoAtual.text = "Minuto Atual: " + dados.nomeMinuto;
+            AtualizarInputSeNaoFocado(inputProb1, (dados.probFundo1 * 100).ToString("F0"));
+            AtualizarInputSeNaoFocado(inputProb2, (dados.probFundo2 * 100).ToString("F0"));
+            AtualizarInputSeNaoFocado(inputProb3, (dados.probTopo3 * 100).ToString("F0"));
+            AtualizarInputSeNaoFocado(inputProb4, (dados.probTopo4 * 100).ToString("F0"));
+            AtualizarInputSeNaoFocado(inputVelMedia, dados.velocidadeMedia.ToString("F2"));
+            AtualizarInputSeNaoFocado(inputVelMax, dados.velocidadeMaxima.ToString("F2"));
+            AtualizarInputSeNaoFocado(inputChance, (dados.chanceEstarMovendo * 100).ToString("F0"));
+        }
+        else
+        {
+            if (textoVariaveisLeitura != null)
+            {
+                textoVariaveisLeitura.text = 
+                    $"<b>Minuto Atual:</b> {dados.nomeMinuto}\n" +
+                    $"<b>Prob. Fundo 1:</b> {(dados.probFundo1 * 100).ToString("F0")}%\n" +
+                    $"<b>Prob. Fundo 2:</b> {(dados.probFundo2 * 100).ToString("F0")}%\n" +
+                    $"<b>Prob. Topo 3:</b> {(dados.probTopo3 * 100).ToString("F0")}%\n" +
+                    $"<b>Prob. Topo 4:</b> {(dados.probTopo4 * 100).ToString("F0")}%\n" +
+                    $"<b>Veloc. Média:</b> {dados.velocidadeMedia} cm/s\n" +
+                    $"<b>Veloc. Máx:</b> {dados.velocidadeMaxima} cm/s\n" +
+                    $"<b>Chance de Mover:</b> {(dados.chanceEstarMovendo * 100).ToString("F0")}%";
+            }
+        }
+    }
+
+    void AtualizarInputSeNaoFocado(TMP_InputField input, string novoTexto)
+    {
+        if (input != null && !input.isFocused)
+        {
+            input.text = novoTexto;
+        }
     }
 
     // --- SISTEMA DE AVISO TEMPORÁRIO ---
 
+    private Coroutine rotinaAviso; 
     void ExibirAvisoTemporario(string mensagem)
     {
         if (textoAviso == null) return;
-
-        // Se já houver um aviso na tela, paramos a contagem dele para reiniciar
         if (rotinaAviso != null) StopCoroutine(rotinaAviso);
-        
         rotinaAviso = StartCoroutine(RotinaAviso(mensagem));
     }
 
     IEnumerator RotinaAviso(string mensagem)
     {
         textoAviso.text = mensagem;
-        yield return new WaitForSeconds(2.5f); // Fica na tela por 2.5 segundos
-        textoAviso.text = ""; // Some com o texto
+        yield return new WaitForSeconds(2.5f); 
+        textoAviso.text = ""; 
     }
 
-    // ------------------------------------
+    // --- CONTROLE PRINCIPAL DA SIMULAÇÃO ---
 
     public void IniciarSimulacao()
     {
@@ -157,17 +331,19 @@ public class PeixeSimulador : MonoBehaviour
             simulando = true;
             tempoSimulacao = 0f;
             
-            if (relogioSimulacao != null) 
-            {
-                relogioSimulacao.IniciarRelogio();
-            }
+            if (relogioSimulacao != null) relogioSimulacao.IniciarRelogio();
             
             if (linhaCentral != null)
             {
                 transform.position = GerarDestinoNaZona(1);
+                if (peixeFantasma != null && peixeFantasma.activeSelf) 
+                    peixeFantasma.transform.position = GerarDestinoNaZona(1);
             }
             
             StartCoroutine(CicloDeVida());
+            
+            if (peixeFantasma != null && peixeFantasma.activeSelf)
+                StartCoroutine(CicloDeVidaFantasma());
         }
     }
 
@@ -176,26 +352,10 @@ public class PeixeSimulador : MonoBehaviour
         simulando = false;
         StopAllCoroutines(); 
         
-        if (relogioSimulacao != null)
-        {
-            relogioSimulacao.PararRelogio();
-        }
+        if (relogioSimulacao != null) relogioSimulacao.PararRelogio();
     }
 
-    void AtualizarPainelVariaveis(DadosMinuto dados)
-    {
-        if (textoVariaveis == null) return;
-
-        textoVariaveis.text = 
-            $"<b>Minuto Atual:</b> {dados.nomeMinuto}\n" +
-            $"<b>Prob. Fundo 1:</b> {(dados.probFundo1 * 100).ToString("F0")}%\n" +
-            $"<b>Prob. Fundo 2:</b> {(dados.probFundo2 * 100).ToString("F0")}%\n" +
-            $"<b>Prob. Topo 3:</b> {(dados.probTopo3 * 100).ToString("F0")}%\n" +
-            $"<b>Prob. Topo 4:</b> {(dados.probTopo4 * 100).ToString("F0")}%\n" +
-            $"<b>Veloc. Média:</b> {dados.velocidadeMedia} cm/s\n" +
-            $"<b>Veloc. Máx:</b> {dados.velocidadeMaxima} cm/s\n" +
-            $"<b>Chance de Mover:</b> {(dados.chanceEstarMovendo * 100).ToString("F0")}%";
-    }
+    // --- LÓGICA DO PEIXE PRINCIPAL ---
 
     IEnumerator CicloDeVida()
     {
@@ -231,7 +391,7 @@ public class PeixeSimulador : MonoBehaviour
             else
             {
                 yield return new WaitForSeconds(0.5f);
-                tempoSimulacao += 0.5f;
+                tempoSimulacao += 0.5f; 
             }
         }
     }
@@ -261,9 +421,7 @@ public class PeixeSimulador : MonoBehaviour
             float progress = t / duracao;
 
             float smoothProgress = Mathf.SmoothStep(0f, 1f, progress);
-            Vector3 novaPos = Vector3.Lerp(inicio, destino, smoothProgress);
-
-            transform.position = novaPos;
+            transform.position = Vector3.Lerp(inicio, destino, smoothProgress);
             yield return null;
         }
         transform.position = destino;
@@ -272,35 +430,108 @@ public class PeixeSimulador : MonoBehaviour
     void FlipSprite(float destinoX)
     {
         if (Mathf.Abs(destinoX - transform.position.x) < 0.5f) return;
-
         float alvoX = (destinoX < transform.position.x) ? -escalaXOriginal : escalaXOriginal;
-
         if (Mathf.Sign(transform.localScale.x) == Mathf.Sign(alvoX) && Mathf.Abs(transform.localScale.x) > 0.1f) return;
 
         if (rotinaVirada != null) StopCoroutine(rotinaVirada);
-        rotinaVirada = StartCoroutine(AnimarVirada(alvoX));
+        rotinaVirada = StartCoroutine(AnimarVirada(alvoX, transform));
     }
 
-    IEnumerator AnimarVirada(float alvoX)
+    // --- LÓGICA DO PEIXE FANTASMA ---
+
+    IEnumerator CicloDeVidaFantasma()
+    {
+        while (simulando) 
+        {
+            if (timelineFantasma.Count == 0) yield break;
+
+            DadosMinuto dadosFantasma;
+            if (indiceMinutoAtual < timelineFantasma.Count)
+                dadosFantasma = timelineFantasma[indiceMinutoAtual];
+            else
+                dadosFantasma = timelineFantasma[timelineFantasma.Count - 1];
+
+            bool deveMover = Random.value < dadosFantasma.chanceEstarMovendo;
+
+            if (deveMover)
+            {
+                int zona = EscolherZonaAlvo(dadosFantasma);
+                Vector3 destino = GerarDestinoNaZona(zona);
+                
+                float velocidadeBruta;
+                if (zona >= 3 && dadosFantasma.velocidadeMaxima > dadosFantasma.velocidadeMedia * 1.5f)
+                    velocidadeBruta = dadosFantasma.velocidadeMaxima; 
+                else
+                    velocidadeBruta = Random.Range(dadosFantasma.velocidadeMedia * 0.9f, dadosFantasma.velocidadeMedia * 1.1f);
+
+                yield return StartCoroutine(NadarParaFantasma(destino, velocidadeBruta));
+            }
+            else
+            {
+                yield return new WaitForSeconds(0.5f);
+            }
+        }
+    }
+
+    IEnumerator NadarParaFantasma(Vector3 destino, float velocidadeBruta)
+    {
+        Vector3 inicio = peixeFantasma.transform.position;
+        float distancia = Vector3.Distance(inicio, destino);
+        
+        if(distancia < 0.1f) yield break;
+
+        float velocidadeUnity = velocidadeBruta * fatorDeEscala; 
+        if(velocidadeUnity < 0.1f) velocidadeUnity = 0.1f; 
+
+        float duracao = distancia / velocidadeUnity;
+        float t = 0f;
+
+        FlipSpriteFantasma(destino.x);
+
+        while (t < duracao)
+        {
+            float dt = Time.deltaTime; 
+            if(dt == 0) dt = 0.016f; 
+            t += dt;
+            float progress = t / duracao;
+            float smoothProgress = Mathf.SmoothStep(0f, 1f, progress);
+            peixeFantasma.transform.position = Vector3.Lerp(inicio, destino, smoothProgress);
+            yield return null;
+        }
+        peixeFantasma.transform.position = destino;
+    }
+
+    void FlipSpriteFantasma(float destinoX)
+    {
+        if (Mathf.Abs(destinoX - peixeFantasma.transform.position.x) < 0.5f) return;
+        float alvoX = (destinoX < peixeFantasma.transform.position.x) ? -escalaXOriginal : escalaXOriginal;
+        if (Mathf.Sign(peixeFantasma.transform.localScale.x) == Mathf.Sign(alvoX) && Mathf.Abs(peixeFantasma.transform.localScale.x) > 0.1f) return;
+
+        if (rotinaViradaFantasma != null) StopCoroutine(rotinaViradaFantasma);
+        rotinaViradaFantasma = StartCoroutine(AnimarVirada(alvoX, peixeFantasma.transform));
+    }
+
+    // --- FUNÇÕES COMPARTILHADAS ---
+
+    IEnumerator AnimarVirada(float alvoX, Transform alvoTransform)
     {
         float tempoVirada = 0.12f; 
         float t = 0f;
-        float startX = transform.localScale.x;
-        Vector3 scale = transform.localScale;
+        float startX = alvoTransform.localScale.x;
+        Vector3 scale = alvoTransform.localScale;
 
         while (t < tempoVirada)
         {
             float dt = Time.deltaTime; 
             if(dt == 0) dt = 0.016f; 
-
             t += dt;
             scale.x = Mathf.Lerp(startX, alvoX, t / tempoVirada);
-            transform.localScale = scale;
+            alvoTransform.localScale = scale;
             yield return null;
         }
         
         scale.x = alvoX;
-        transform.localScale = scale;
+        alvoTransform.localScale = scale;
     }
     
     void AtualizarIndiceMinuto() 
@@ -344,13 +575,13 @@ public class PeixeSimulador : MonoBehaviour
         float yRelativo = Random.Range(minY, maxY);
         float yFinal = 0;
 
-        if(linhaCentral != null)
-             yFinal = linhaCentral.position.y + yRelativo;
+        if(linhaCentral != null) yFinal = linhaCentral.position.y + yRelativo;
         
         float xFinal = Random.Range(limiteMinX, limiteMaxX);
-        
         return new Vector3(xFinal, yFinal, transform.position.z);
     }
+
+    // --- BANCOS DE DADOS ---
 
     void CarregarDadosNormais()
     {
@@ -388,20 +619,38 @@ public class PeixeSimulador : MonoBehaviour
         timelineComportamento.Add(new DadosMinuto { nomeMinuto = "9-10", probFundo1 = 0.12f, probFundo2 = 0.35f, probTopo3 = 0.47f, probTopo4 = 0.06f, velocidadeMedia = 4.56f, velocidadeMaxima = 21.04f, chanceEstarMovendo = 0.93f });
     }
 
-    void OnDrawGizmos()
+    void CarregarDadosAlcoolAlto() 
     {
-        if (linhaCentral == null) return;
-        float cy = linhaCentral.position.y;
-        Gizmos.color = Color.blue;
-        Gizmos.DrawLine(new Vector3(-10, cy - alturaAguaTotal/2, 0), new Vector3(10, cy - alturaAguaTotal/2, 0)); 
-        Gizmos.color = Color.yellow;
-        Gizmos.DrawLine(new Vector3(-10, cy + alturaAguaTotal/2, 0), new Vector3(10, cy + alturaAguaTotal/2, 0)); 
-        Gizmos.color = Color.red;
-        Vector3 cantoEsqSup = new Vector3(limiteMinX, cy + alturaAguaTotal/2, 0);
-        Vector3 cantoDirSup = new Vector3(limiteMaxX, cy + alturaAguaTotal/2, 0);
-        Vector3 cantoEsqInf = new Vector3(limiteMinX, cy - alturaAguaTotal/2, 0);
-        Vector3 cantoDirInf = new Vector3(limiteMaxX, cy - alturaAguaTotal/2, 0);
-        Gizmos.DrawLine(cantoEsqSup, cantoEsqInf); 
-        Gizmos.DrawLine(cantoDirSup, cantoDirInf); 
+        tempoDeLatencia = 215f; 
+        if(timelineComportamento == null) timelineComportamento = new List<DadosMinuto>();
+        timelineComportamento.Clear();
+
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "0-1", probFundo1 = 0.97f, probFundo2 = 0.03f, probTopo3 = 0f, probTopo4 = 0f, velocidadeMedia = 1.85f, velocidadeMaxima = 3.20f, chanceEstarMovendo = 0.17f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "1-2", probFundo1 = 0.82f, probFundo2 = 0.18f, probTopo3 = 0f, probTopo4 = 0f, velocidadeMedia = 1.72f, velocidadeMaxima = 3.02f, chanceEstarMovendo = 0.25f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "2-3", probFundo1 = 0.77f, probFundo2 = 0.23f, probTopo3 = 0f, probTopo4 = 0f, velocidadeMedia = 1.98f, velocidadeMaxima = 3.50f, chanceEstarMovendo = 0.23f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "3-4", probFundo1 = 0.53f, probFundo2 = 0.47f, probTopo3 = 0f, probTopo4 = 0f, velocidadeMedia = 2.68f, velocidadeMaxima = 3.10f, chanceEstarMovendo = 0.23f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "4-5", probFundo1 = 0.68f, probFundo2 = 0.32f, probTopo3 = 0f, probTopo4 = 0f, velocidadeMedia = 2.02f, velocidadeMaxima = 3.84f, chanceEstarMovendo = 0.30f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "5-6", probFundo1 = 0.63f, probFundo2 = 0.37f, probTopo3 = 0f, probTopo4 = 0f, velocidadeMedia = 2.02f, velocidadeMaxima = 2.80f, chanceEstarMovendo = 0.57f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "6-7", probFundo1 = 0.52f, probFundo2 = 0.48f, probTopo3 = 0f, probTopo4 = 0f, velocidadeMedia = 2.36f, velocidadeMaxima = 3.01f, chanceEstarMovendo = 0.48f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "7-8", probFundo1 = 0.47f, probFundo2 = 0.43f, probTopo3 = 0.10f, probTopo4 = 0f, velocidadeMedia = 3.02f, velocidadeMaxima = 16.50f, chanceEstarMovendo = 0.75f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "8-9", probFundo1 = 0.30f, probFundo2 = 0.52f, probTopo3 = 0.15f, probTopo4 = 0.03f, velocidadeMedia = 3.88f, velocidadeMaxima = 21.62f, chanceEstarMovendo = 0.77f });
+        timelineComportamento.Add(new DadosMinuto { nomeMinuto = "9-10", probFundo1 = 0.45f, probFundo2 = 0.35f, probTopo3 = 0.13f, probTopo4 = 0.07f, velocidadeMedia = 3.05f, velocidadeMaxima = 14.50f, chanceEstarMovendo = 0.63f });
+    }
+
+    void CarregarDadosFantasma()
+    {
+        if(timelineFantasma == null) timelineFantasma = new List<DadosMinuto>();
+        timelineFantasma.Clear();
+
+        timelineFantasma.Add(new DadosMinuto { nomeMinuto = "0-1", probFundo1 = 0.73f, probFundo2 = 0.27f, probTopo3 = 0f, probTopo4 = 0f, velocidadeMedia = 2.05f, velocidadeMaxima = 2.05f, chanceEstarMovendo = 0.53f });
+        timelineFantasma.Add(new DadosMinuto { nomeMinuto = "1-2", probFundo1 = 0.60f, probFundo2 = 0.40f, probTopo3 = 0f, probTopo4 = 0f, velocidadeMedia = 3.26f, velocidadeMaxima = 5.50f, chanceEstarMovendo = 0.65f });
+        timelineFantasma.Add(new DadosMinuto { nomeMinuto = "2-3", probFundo1 = 0.52f, probFundo2 = 0.43f, probTopo3 = 0.05f, probTopo4 = 0f, velocidadeMedia = 8.05f, velocidadeMaxima = 82.81f, chanceEstarMovendo = 0.90f });
+        timelineFantasma.Add(new DadosMinuto { nomeMinuto = "3-4", probFundo1 = 0.48f, probFundo2 = 0.45f, probTopo3 = 0.07f, probTopo4 = 0f, velocidadeMedia = 4.05f, velocidadeMaxima = 53.00f, chanceEstarMovendo = 0.85f });
+        timelineFantasma.Add(new DadosMinuto { nomeMinuto = "4-5", probFundo1 = 0.30f, probFundo2 = 0.60f, probTopo3 = 0.10f, probTopo4 = 0f, velocidadeMedia = 4.35f, velocidadeMaxima = 47.55f, chanceEstarMovendo = 0.93f });
+        timelineFantasma.Add(new DadosMinuto { nomeMinuto = "5-6", probFundo1 = 0.22f, probFundo2 = 0.35f, probTopo3 = 0.35f, probTopo4 = 0.08f, velocidadeMedia = 7.38f, velocidadeMaxima = 66.04f, chanceEstarMovendo = 0.96f });
+        timelineFantasma.Add(new DadosMinuto { nomeMinuto = "6-7", probFundo1 = 0.32f, probFundo2 = 0.38f, probTopo3 = 0.30f, probTopo4 = 0f, velocidadeMedia = 6.35f, velocidadeMaxima = 29.00f, chanceEstarMovendo = 0.96f });
+        timelineFantasma.Add(new DadosMinuto { nomeMinuto = "7-8", probFundo1 = 0.33f, probFundo2 = 0.28f, probTopo3 = 0.30f, probTopo4 = 0.09f, velocidadeMedia = 5.80f, velocidadeMaxima = 18.50f, chanceEstarMovendo = 1.0f });
+        timelineFantasma.Add(new DadosMinuto { nomeMinuto = "8-9", probFundo1 = 0.22f, probFundo2 = 0.43f, probTopo3 = 0.20f, probTopo4 = 0.15f, velocidadeMedia = 6.20f, velocidadeMaxima = 13.50f, chanceEstarMovendo = 0.93f });
+        timelineFantasma.Add(new DadosMinuto { nomeMinuto = "9-10", probFundo1 = 0.33f, probFundo2 = 0.55f, probTopo3 = 0.07f, probTopo4 = 0.05f, velocidadeMedia = 5.89f, velocidadeMaxima = 7.25f, chanceEstarMovendo = 0.95f });
     }
 }
